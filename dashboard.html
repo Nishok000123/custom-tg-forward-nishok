@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FwdBot Control</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080c10;
+    --surface: #0d1117;
+    --surface2: #131920;
+    --border: #1e2d3d;
+    --accent: #00d4ff;
+    --accent2: #7c3aed;
+    --green: #00ff9d;
+    --red: #ff3864;
+    --yellow: #ffd600;
+    --text: #c9d1d9;
+    --muted: #4a5568;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-display: 'Syne', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font-mono); min-height: 100vh; overflow-x: hidden; }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none; z-index: 0;
+  }
+  .container { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 24px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .logo h1 { font-family: var(--font-display); font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: #fff; }
+  .logo span { font-size: 11px; color: var(--muted); font-weight: 300; display: block; letter-spacing: 2px; text-transform: uppercase; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .status-badge { display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: rgba(0,255,157,0.08); border: 1px solid rgba(0,255,157,0.2); border-radius: 20px; font-size: 12px; color: var(--green); font-weight: 500; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(0,255,157,0.4)} 50%{opacity:.8;box-shadow:0 0 0 4px rgba(0,255,157,0)} }
+  .stats-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 32px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; transition: border-color .2s; cursor: pointer; }
+  .stat-card:hover { border-color: var(--accent); }
+  .stat-card::before { content:''; position:absolute; top:0;left:0;right:0; height:2px; }
+  .stat-card.live::before{background:linear-gradient(90deg,var(--accent),transparent)}
+  .stat-card.batch::before{background:linear-gradient(90deg,var(--accent2),transparent)}
+  .stat-card.schedule::before{background:linear-gradient(90deg,var(--yellow),transparent)}
+  .stat-card.conn::before{background:linear-gradient(90deg,var(--green),transparent)}
+  .stat-label { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+  .stat-value { font-family:var(--font-display); font-size:32px; font-weight:800; color:#fff; line-height:1; }
+  .stat-sub { font-size:11px; color:var(--muted); margin-top:6px; }
+  .uptime-bar { display:flex; align-items:center; gap:10px; padding:10px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:11px; color:var(--muted); margin-bottom:24px; }
+  .uptime-bar span { color:var(--accent); }
+  .main-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .panel.wide { grid-column:1/-1; }
+  .panel-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); }
+  .panel-title { font-family:var(--font-display); font-size:13px; font-weight:600; color:#fff; letter-spacing:.5px; display:flex; align-items:center; gap:8px; }
+  .panel-title .dot { width:6px; height:6px; border-radius:50%; }
+  .btn { padding:6px 14px; border-radius:6px; font-family:var(--font-mono); font-size:11px; font-weight:500; cursor:pointer; border:none; transition:all .15s; letter-spacing:.5px; }
+  .btn-primary { background:var(--accent); color:#000; }
+  .btn-primary:hover { background:#00b8db; transform:translateY(-1px); }
+  .btn-primary:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+  .btn-danger { background:rgba(255,56,100,.15); color:var(--red); border:1px solid rgba(255,56,100,.3); }
+  .btn-danger:hover { background:rgba(255,56,100,.25); }
+  .btn-ghost { background:transparent; color:var(--muted); border:1px solid var(--border); }
+  .btn-ghost:hover { color:var(--text); border-color:var(--accent); }
+  .watcher-list { padding:12px; }
+  .watcher-item { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); margin-bottom:8px; transition:border-color .2s; }
+  .watcher-item:hover { border-color:var(--accent); }
+  .watcher-item:last-child { margin-bottom:0; }
+  .watcher-info { flex:1; }
+  .watcher-route { font-size:12px; color:#fff; display:flex; align-items:center; gap:8px; margin-bottom:4px; flex-wrap:wrap; }
+  .watcher-route .arrow { color:var(--accent); }
+  .chat-id { background:rgba(0,212,255,.08); padding:2px 8px; border-radius:4px; font-size:11px; color:var(--accent); }
+  .watcher-meta { font-size:10px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; }
+  .tag { padding:1px 7px; border-radius:3px; font-size:10px; font-weight:500; letter-spacing:.5px; }
+  .tag-live{background:rgba(0,212,255,.1);color:var(--accent)}
+  .tag-ok{background:rgba(0,255,157,.1);color:var(--green)}
+  .tag-warn{background:rgba(255,214,0,.1);color:var(--yellow)}
+  .tag-dead{background:rgba(255,56,100,.1);color:var(--red)}
+  .schedule-item { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; padding:12px 14px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); margin:12px; margin-bottom:0; transition:border-color .2s; }
+  .schedule-item:last-child { margin-bottom:12px; }
+  .schedule-item:hover { border-color:var(--yellow); }
+  .sched-id { font-size:11px; color:var(--yellow); font-weight:500; margin-bottom:4px; }
+  .sched-route { font-size:12px; color:#fff; margin-bottom:4px; }
+  .sched-meta { font-size:10px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; }
+  .progress-bar { height:3px; background:var(--border); border-radius:2px; margin-top:6px; overflow:hidden; }
+  .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:2px; transition:width .5s ease; }
+  .batch-item { padding:14px 16px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); margin:12px; margin-bottom:0; }
+  .batch-item:last-child { margin-bottom:12px; }
+  .batch-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .batch-id { font-size:11px; color:var(--accent2); font-weight:500; }
+  .batch-stats { display:flex; gap:16px; font-size:11px; color:var(--muted); margin-bottom:6px; flex-wrap:wrap; }
+  .batch-stats span { color:var(--text); }
+  .conn-item { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); margin:12px; margin-bottom:0; transition:border-color .2s; }
+  .conn-item:last-child { margin-bottom:12px; }
+  .conn-item:hover { border-color:var(--green); }
+  .conn-name { font-size:13px; color:#fff; font-weight:500; margin-bottom:2px; }
+  .conn-detail { font-size:10px; color:var(--muted); }
+  .conn-actions { display:flex; gap:6px; }
+  .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; }
+  .form-group { display:flex; flex-direction:column; gap:6px; }
+  .form-group.full { grid-column:1/-1; }
+  label { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); }
+  input, select { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:9px 12px; font-family:var(--font-mono); font-size:12px; color:var(--text); outline:none; transition:border-color .2s; width:100%; }
+  input:focus, select:focus { border-color:var(--accent); }
+  select option { background:var(--bg); }
+  .form-actions { display:flex; gap:8px; justify-content:flex-end; }
+  .log-panel { padding:16px; font-size:11px; line-height:1.8; max-height:200px; overflow-y:auto; }
+  .log-panel::-webkit-scrollbar { width:4px; }
+  .log-panel::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+  .log-line { display:flex; gap:10px; }
+  .log-time { color:var(--muted); min-width:80px; }
+  .log-msg.ok{color:var(--green)}.log-msg.warn{color:var(--yellow)}.log-msg.err{color:var(--red)}.log-msg.info{color:var(--accent)}
+  .empty { padding:40px; text-align:center; color:var(--muted); font-size:12px; }
+  .notif { position:fixed; bottom:24px; right:24px; padding:12px 20px; border-radius:8px; font-size:12px; z-index:100; transform:translateY(80px); opacity:0; transition:all .3s ease; pointer-events:none; }
+  .notif.show { transform:translateY(0); opacity:1; }
+  .notif.success { background:rgba(0,255,157,.15); border:1px solid var(--green); color:var(--green); }
+  .notif.error { background:rgba(255,56,100,.15); border:1px solid var(--red); color:var(--red); }
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(4px); z-index:50; display:none; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px; width:480px; max-width:90vw; animation:modalIn .2s ease; }
+  @keyframes modalIn { from{transform:scale(.95);opacity:0} to{transform:scale(1);opacity:1} }
+  .modal h3 { font-family:var(--font-display); font-size:16px; font-weight:700; color:#fff; margin-bottom:20px; }
+  .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+  .loading { opacity:.5; pointer-events:none; }
+  .refresh-btn { background:transparent; border:1px solid var(--border); color:var(--muted); padding:5px 12px; border-radius:6px; font-family:var(--font-mono); font-size:11px; cursor:pointer; transition:all .15s; }
+  .refresh-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .settings-bar { display:flex; gap:10px; align-items:center; margin-bottom:20px; padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+  .settings-bar input { flex:1; max-width:260px; }
+  .settings-bar label { white-space:nowrap; }
+  @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr)}.main-grid{grid-template-columns:1fr}.panel.wide{grid-column:1}.form-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <h1>FwdBot Control</h1>
+        <span>Telegram Forward Manager</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="refresh-btn" onclick="loadAll()">⟳ Refresh</button>
+      <div class="status-badge" id="status-badge">
+        <div class="status-dot"></div>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Settings bar -->
+  <div class="settings-bar">
+    <label>BOT URL</label>
+    <input type="text" id="bot-url" placeholder="https://your-space.hf.space" oninput="saveSettings()">
+    <label>API Token</label>
+    <input type="password" id="api-token" placeholder="your-api-token" oninput="saveSettings()">
+    <label>User ID</label>
+    <input type="text" id="user-id" placeholder="123456789" oninput="saveSettings()">
+    <button class="btn btn-primary" onclick="loadAll()">Connect</button>
+  </div>
+
+  <!-- Uptime -->
+  <div class="uptime-bar">⏱ Uptime: <span id="uptime">--</span> &nbsp;|&nbsp; Live: <span id="hdr-live">0</span> &nbsp;|&nbsp; Batch: <span id="hdr-batch">0</span> &nbsp;|&nbsp; Schedules: <span id="hdr-sched">0</span></div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card live"><div class="stat-label">Live Watchers</div><div class="stat-value" id="stat-live">–</div><div class="stat-sub">Active right now</div></div>
+    <div class="stat-card batch"><div class="stat-label">Batch Jobs</div><div class="stat-value" id="stat-batch">–</div><div class="stat-sub">In progress</div></div>
+    <div class="stat-card schedule"><div class="stat-label">Schedules</div><div class="stat-value" id="stat-sched">–</div><div class="stat-sub">Running</div></div>
+    <div class="stat-card conn"><div class="stat-label">Connections</div><div class="stat-value" id="stat-conn">–</div><div class="stat-sub">Saved</div></div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- Live Watchers -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><div class="dot" style="background:var(--accent)"></div>Live Watchers</div>
+        <button class="btn btn-primary" onclick="openModal('live')">+ Add</button>
+      </div>
+      <div class="watcher-list" id="live-list"><div class="empty">Loading...</div></div>
+    </div>
+
+    <!-- Schedules -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><div class="dot" style="background:var(--yellow)"></div>Schedules</div>
+        <button class="btn btn-primary" onclick="openModal('schedule')">+ Add</button>
+      </div>
+      <div id="sched-list"><div class="empty">Loading...</div></div>
+    </div>
+
+    <!-- Batch -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><div class="dot" style="background:var(--accent2)"></div>Batch Forwards</div>
+        <button class="btn btn-danger" onclick="cancelAllBatch()">Cancel All</button>
+      </div>
+      <div id="batch-list"><div class="empty">Loading...</div></div>
+    </div>
+
+    <!-- Connections -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><div class="dot" style="background:var(--green)"></div>Connections</div>
+      </div>
+      <div id="conn-list"><div class="empty">Loading...</div></div>
+    </div>
+
+    <!-- Log -->
+    <div class="panel wide">
+      <div class="panel-header">
+        <div class="panel-title"><div class="dot" style="background:var(--muted)"></div>Activity Log</div>
+        <button class="btn btn-ghost" onclick="clearLog()">Clear</button>
+      </div>
+      <div class="log-panel" id="log-panel">
+        <div class="log-line"><span class="log-time">--:--:--</span><span class="log-msg info">Dashboard loaded. Configure Bot URL and connect.</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Add Live Modal -->
+<div class="modal-overlay" id="modal-live">
+  <div class="modal">
+    <h3>➕ New Live Watcher</h3>
+    <div class="form-grid">
+      <div class="form-group"><label>Source Chat ID</label><input type="text" id="live-from" placeholder="-1001234567890"></div>
+      <div class="form-group"><label>Target Chat ID</label><input type="text" id="live-to" placeholder="-1009876543210"></div>
+      <div class="form-group full"><label>Connection (optional)</label><input type="text" id="live-conn-name" placeholder="leave blank for active connection"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('live')">Cancel</button>
+      <button class="btn btn-primary" onclick="addLive()">Start Watcher</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Schedule Modal -->
+<div class="modal-overlay" id="modal-schedule">
+  <div class="modal">
+    <h3>📅 New Schedule</h3>
+    <div class="form-grid">
+      <div class="form-group"><label>Source Chat ID</label><input type="text" id="sched-from" placeholder="-1001234567890"></div>
+      <div class="form-group"><label>Target Chat ID</label><input type="text" id="sched-to" placeholder="-1009876543210"></div>
+      <div class="form-group"><label>Interval</label><input type="text" id="sched-interval" placeholder="30m / 6h / 1d"></div>
+      <div class="form-group"><label>Start Message ID</label><input type="text" id="sched-start" placeholder="1"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('schedule')">Cancel</button>
+      <button class="btn btn-primary" onclick="addSchedule()">Create Schedule</button>
+    </div>
+  </div>
+</div>
+
+<div class="notif" id="notif"></div>
+
+<script>
+// ── Settings ──────────────────────────────────────────────────────────────────
+function saveSettings() {
+  localStorage.setItem('bot_url', document.getElementById('bot-url').value);
+  localStorage.setItem('api_token', document.getElementById('api-token').value);
+  localStorage.setItem('user_id', document.getElementById('user-id').value);
+}
+
+function loadSettings() {
+  document.getElementById('bot-url').value = localStorage.getItem('bot_url') || '';
+  document.getElementById('api-token').value = localStorage.getItem('api_token') || '';
+  document.getElementById('user-id').value = localStorage.getItem('user_id') || '';
+}
+
+function getConfig() {
+  return {
+    url: document.getElementById('bot-url').value.trim().replace(/\/$/, ''),
+    token: document.getElementById('api-token').value.trim(),
+    userId: document.getElementById('user-id').value.trim(),
+  };
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const { url, token } = getConfig();
+  if (!url) throw new Error('No bot URL configured');
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': token }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`${url}${path}`, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── Notification ──────────────────────────────────────────────────────────────
+function notify(msg, type = 'success') {
+  const n = document.getElementById('notif');
+  n.textContent = msg;
+  n.className = `notif ${type} show`;
+  setTimeout(() => n.classList.remove('show'), 3000);
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function addLog(msg, type = 'info') {
+  const panel = document.getElementById('log-panel');
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span>`;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function clearLog() { document.getElementById('log-panel').innerHTML = ''; }
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+function openModal(t) { document.getElementById(`modal-${t}`).classList.add('open'); }
+function closeModal(t) { document.getElementById(`modal-${t}`).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+
+// ── Load All ──────────────────────────────────────────────────────────────────
+async function loadAll() {
+  try {
+    await Promise.all([loadStatus(), loadLive(), loadSchedules(), loadBatch(), loadConns()]);
+  } catch(e) {
+    addLog(`Connection failed: ${e.message}`, 'err');
+    document.getElementById('status-text').textContent = 'Offline';
+    document.getElementById('status-badge').style.borderColor = 'rgba(255,56,100,0.3)';
+    document.getElementById('status-badge').style.background = 'rgba(255,56,100,0.08)';
+    document.getElementById('status-badge').style.color = 'var(--red)';
+    document.querySelector('.status-dot').style.background = 'var(--red)';
+    document.querySelector('.status-dot').style.animation = 'none';
+  }
+}
+
+async function loadStatus() {
+  const d = await api('/api/status');
+  document.getElementById('status-text').textContent = 'Online · ' + d.uptime;
+  document.getElementById('uptime').textContent = d.uptime;
+  document.getElementById('hdr-live').textContent = d.live_watchers;
+  document.getElementById('hdr-batch').textContent = d.batch_forwards;
+  document.getElementById('hdr-sched').textContent = d.schedules;
+  document.getElementById('stat-live').textContent = d.live_watchers;
+  document.getElementById('stat-batch').textContent = d.batch_forwards;
+  document.getElementById('stat-sched').textContent = d.schedules;
+}
+
+// ── Live Watchers ─────────────────────────────────────────────────────────────
+async function loadLive() {
+  const d = await api('/api/live');
+  const list = document.getElementById('live-list');
+  if (!d.watchers.length) { list.innerHTML = '<div class="empty">No active watchers</div>'; return; }
+  list.innerHTML = d.watchers.map(w => `
+    <div class="watcher-item">
+      <div class="watcher-info">
+        <div class="watcher-route">
+          <span class="chat-id">${w.from_id}</span>
+          <span class="arrow">→</span>
+          <span class="chat-id">${w.to_id}</span>
+        </div>
+        <div class="watcher-meta">
+          <span class="tag tag-live">LIVE</span>
+          <span class="tag tag-ok">● RUNNING</span>
+          <span>conn: ${w.conn_name}</span>
+        </div>
+      </div>
+      <button class="btn btn-danger" onclick="stopLive(this,${w.from_id},${w.to_id})">Stop</button>
+    </div>`).join('');
+}
+
+async function stopLive(btn, fromId, toId) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    await api('/api/live', 'DELETE', { from_id: fromId, to_id: toId });
+    btn.closest('.watcher-item').remove();
+    addLog(`Stopped live watcher: ${fromId} → ${toId}`, 'warn');
+    notify('Live watcher stopped');
+    await loadStatus();
+  } catch(e) {
+    notify(e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Stop';
+  }
+}
+
+async function addLive() {
+  const from = document.getElementById('live-from').value.trim();
+  const to = document.getElementById('live-to').value.trim();
+  const conn = document.getElementById('live-conn-name').value.trim() || null;
+  const { userId } = getConfig();
+  if (!from || !to) return notify('Fill in both chat IDs', 'error');
+  try {
+    await api('/api/live', 'POST', { from_id: parseInt(from) || from, to_id: parseInt(to) || to, conn_name: conn, user_id: parseInt(userId) });
+    addLog(`Started live watcher: ${from} → ${to}`, 'ok');
+    notify('Live watcher started ✓');
+    closeModal('live');
+    document.getElementById('live-from').value = '';
+    document.getElementById('live-to').value = '';
+    await loadLive();
+    await loadStatus();
+  } catch(e) { notify(e.message, 'error'); }
+}
+
+// ── Schedules ─────────────────────────────────────────────────────────────────
+async function loadSchedules() {
+  const d = await api('/api/schedules');
+  const list = document.getElementById('sched-list');
+  if (!d.schedules.length) { list.innerHTML = '<div class="empty">No schedules</div>'; return; }
+  list.innerHTML = d.schedules.map(s => `
+    <div class="schedule-item">
+      <div>
+        <div class="sched-id"># ${s.sched_id}</div>
+        <div class="sched-route"><b>${s.from_title || s.from_id}</b> → <b>${s.to_title || s.to_id}${s.to_topic ? '/'+s.to_topic : ''}</b></div>
+        <div class="sched-meta">
+          <span style="color:var(--muted);font-size:10px">${s.from_id} → ${s.to_id}${s.to_topic ? '/'+s.to_topic : ''}</span>
+          <span>Every <b style="color:var(--yellow)">${s.interval_label}</b></span>
+          <span>Mode: <b style="color:var(--text)">${s.force_download ? 'download' : 'auto'}</b></span>
+          <span>Last msg: <b style="color:var(--text)">${s.last_forwarded_id}</b></span>
+          <span class="tag ${s.running ? 'tag-ok' : 'tag-dead'}">${s.running ? '● RUNNING' : '● STOPPED'}</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${s.running?'40':'0'}%"></div></div>
+      </div>
+      <button class="btn btn-danger" onclick="cancelSched(this,'${s.sched_id}')">Cancel</button>
+    </div>`).join('');
+  document.getElementById('stat-sched').textContent = d.schedules.filter(s=>s.running).length;
+}
+
+async function cancelSched(btn, schedId) {
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    await api('/api/schedules', 'DELETE', { sched_id: schedId });
+    btn.closest('.schedule-item').remove();
+    addLog(`Cancelled schedule: ${schedId}`, 'warn');
+    notify(`Schedule ${schedId} cancelled`);
+    await loadStatus();
+  } catch(e) { notify(e.message, 'error'); btn.disabled=false; btn.textContent='Cancel'; }
+}
+
+async function addSchedule() {
+  notify('Use /schedule command in Telegram to create schedules', 'error');
+}
+
+// ── Batch ─────────────────────────────────────────────────────────────────────
+async function loadBatch() {
+  const d = await api('/api/batch');
+  const list = document.getElementById('batch-list');
+  if (!d.batches.length) { list.innerHTML = '<div class="empty">No active batch forwards</div>'; return; }
+  list.innerHTML = d.batches.map(b => `
+    <div class="batch-item">
+      <div class="batch-header">
+        <span class="batch-id"># ${b.frwd_id}</span>
+        <span class="tag tag-ok">● RUNNING</span>
+      </div>
+      <div class="batch-stats">
+        Fetched: <span>${b.fetched.toLocaleString()}</span> &nbsp;
+        Forwarded: <span>${b.forwarded.toLocaleString()}</span> &nbsp;
+        Deleted: <span>${b.deleted}</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${b.percent}%"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px">
+        <span style="font-size:10px;color:var(--muted)">${b.percent}% complete</span>
+        <button class="btn btn-danger" style="padding:3px 10px;font-size:10px" onclick="cancelBatch(this,'${b.frwd_id}')">Cancel</button>
+      </div>
+    </div>`).join('');
+  document.getElementById('stat-batch').textContent = d.batches.length;
+}
+
+async function cancelBatch(btn, frwdId) {
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    await api('/api/batch/cancel', 'POST', { frwd_id: frwdId });
+    btn.closest('.batch-item').remove();
+    addLog(`Cancelled batch: ${frwdId}`, 'warn');
+    notify(`Batch cancelled`);
+    await loadStatus();
+  } catch(e) { notify(e.message,'error'); btn.disabled=false; btn.textContent='Cancel'; }
+}
+
+async function cancelAllBatch() {
+  const { userId } = getConfig();
+  if (!userId) return notify('Set User ID first', 'error');
+  try {
+    const d = await api('/api/batch/cancel', 'POST', { user_id: parseInt(userId) });
+    addLog(`Cancelled ${d.cancelled} batch forward(s)`, 'warn');
+    notify(`${d.cancelled} batch job(s) cancelled`);
+    await loadBatch();
+    await loadStatus();
+  } catch(e) { notify(e.message,'error'); }
+}
+
+// ── Connections ───────────────────────────────────────────────────────────────
+async function loadConns() {
+  const { userId } = getConfig();
+  if (!userId) { document.getElementById('conn-list').innerHTML = '<div class="empty">Set User ID to load connections</div>'; return; }
+  const d = await api(`/api/connections?user_id=${userId}`);
+  const list = document.getElementById('conn-list');
+  document.getElementById('stat-conn').textContent = d.connections.length;
+  if (!d.connections.length) { list.innerHTML = '<div class="empty">No saved connections</div>'; return; }
+  list.innerHTML = d.connections.map(c => `
+    <div class="conn-item">
+      <div>
+        <div class="conn-name">${c.name}</div>
+        <div class="conn-detail">${c.is_bot ? '🤖 Bot' : '👤 Userbot'} · @${c.username} · type: ${c.conn_type}</div>
+      </div>
+      <div class="conn-actions">
+        <button class="btn btn-danger" style="font-size:10px;padding:4px 10px" onclick="delConn(this,'${c.name}')">Del</button>
+      </div>
+    </div>`).join('');
+}
+
+async function delConn(btn, name) {
+  const { userId } = getConfig();
+  btn.disabled = true;
+  try {
+    await api('/api/connections', 'DELETE', { user_id: parseInt(userId), name });
+    btn.closest('.conn-item').remove();
+    addLog(`Deleted connection: ${name}`, 'warn');
+    notify(`Connection "${name}" deleted`);
+    await loadConns();
+  } catch(e) { notify(e.message,'error'); btn.disabled=false; }
+}
+
+// ── Auto refresh every 30s ────────────────────────────────────────────────────
+loadSettings();
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
