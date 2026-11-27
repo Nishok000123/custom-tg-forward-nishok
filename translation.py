@@ -13,6 +13,7 @@ All in one place. Clean & fast."""
 
 <b>Core</b>
 • /menu — main panel
+• /tasks — manage running tasks + per-task filters
 • /status — all active jobs
 • /cancel — stop batch jobs
 

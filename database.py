@@ -1,6 +1,7 @@
 from os import environ 
 from config import Config
 import motor.motor_asyncio
+from secret_box import seal, rotate, SECRET_FIELDS
 from pymongo import MongoClient
 
 async def mongodb_version():
@@ -121,11 +122,27 @@ class Database:
        
     async def add_bot(self, datas):
        if not await self.is_bot_exist(datas['user_id']):
-          await self.bot.insert_one(datas)
+          await self.bot.insert_one(seal(datas))
     
     async def remove_bot(self, user_id):
        await self.bot.delete_many({'user_id': int(user_id)})
       
+    async def migrate_secrets(self) -> int:
+        """Encrypt legacy plaintext sessions/tokens (and re-key old ones). Returns count."""
+        changed = 0
+        async for doc in self.bot.find({}):
+            upd = {f: rotate(doc[f]) for f in SECRET_FIELDS if doc.get(f) and rotate(doc[f]) != doc[f]}
+            if upd:
+                await self.bot.update_one({"_id": doc["_id"]}, {"$set": upd})
+                changed += 1
+        async for doc in self.conn.find({}):
+            bd = doc.get("bot_data") or {}
+            upd = {f"bot_data.{f}": rotate(bd[f]) for f in SECRET_FIELDS if bd.get(f) and rotate(bd[f]) != bd[f]}
+            if upd:
+                await self.conn.update_one({"_id": doc["_id"]}, {"$set": upd})
+                changed += 1
+        return changed
+
     async def get_bot(self, user_id: int):
        bot = await self.bot.find_one({'user_id': user_id})
        return bot if bot else None
@@ -189,7 +206,7 @@ class Database:
     async def save_connection(self, user_id: int, name: str, bot_data: dict, conn_type: str = "all"):
         await self.conn.update_one(
             {"user_id": user_id, "name": name},
-            {"$set": {"user_id": user_id, "name": name, "bot_data": bot_data, "conn_type": conn_type}},
+            {"$set": {"user_id": user_id, "name": name, "bot_data": seal(bot_data), "conn_type": conn_type}},
             upsert=True
         )
 

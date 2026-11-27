@@ -58,6 +58,7 @@ class Bot(Client):
                 BotCommand("start", "Main menu"),
                 BotCommand("menu", "Main menu"),
                 BotCommand("help", "Help"),
+                BotCommand("tasks", "Manage running tasks + filters"),
                 BotCommand("status", "All jobs: batch · live · schedule"),
                 BotCommand("forward", "Multi source → multi target"),
                 BotCommand("fwd", "Multi source → multi target"),

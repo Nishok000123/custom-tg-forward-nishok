@@ -116,6 +116,9 @@ class CLIENT:
      self.api_hash = Config.API_HASH
     
   def client(self, data, user=None):
+     from secret_box import unseal
+     if isinstance(data, dict):
+        data = unseal(data)
      if user == None and data.get('is_bot') == False:
         return Client(f"USERBOT_{data.get('user_id', '')}", self.api_id, self.api_hash, session_string=data.get('session'), in_memory=True)
      elif user == True:

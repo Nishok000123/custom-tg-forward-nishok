@@ -12,3 +12,4 @@ requests
 speedtest-cli
 pymongo
 aiohttp
+cryptography

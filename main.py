@@ -296,6 +296,13 @@ async def ping_server():
 async def main():
     bot = Bot()
     await bot.start()
+    try:
+        from database import db as _db
+        n = await _db.migrate_secrets()
+        if n:
+            logging.info(f"Encrypted/re-keyed {n} stored session/token record(s)")
+    except Exception as e:
+        logging.error(f"Secret migration failed: {e}")
     await restore_live_watchers(bot)
     await restore_schedules(bot)
     await web_server(bot)

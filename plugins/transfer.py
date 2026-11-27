@@ -137,6 +137,31 @@ async def transfer_message(
     mid = message_id if message_id is not None else (msg.id if msg else None)
     thread_kw = {"message_thread_id": topic_id} if topic_id else {}
 
+    # Text message with rewritten text (find/replace, header, footer…):
+    # copy_message ignores `caption` for text, so send the new text directly.
+    if caption is not None and msg is not None and msg.text and not msg.media:
+        if not str(caption).strip():
+            return True, "skipped-empty"
+        extra = {**thread_kw}
+        if reply_markup is not None:
+            extra["reply_markup"] = reply_markup
+        if protect_content is not None:
+            extra["protect_content"] = protect_content
+        for sender in (uploader, client) if uploader is not client else (client,):
+            try:
+                await sender.send_message(dest_chat, caption, disable_web_page_preview=True, **extra)
+                return True, "text-rewritten"
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+                try:
+                    await sender.send_message(dest_chat, caption, disable_web_page_preview=True, **extra)
+                    return True, "text-rewritten"
+                except Exception as e2:
+                    last = e2
+            except Exception as e:
+                last = e
+        return False, f"send text failed: {last}"
+
     # Resolve caption from msg if not given
     if caption is None and msg is not None:
         if msg.caption:

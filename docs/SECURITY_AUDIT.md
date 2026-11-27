@@ -82,4 +82,5 @@ Any Telegram user can `/start` the bot, add a session, and run forwards, live wa
 | L3 add_bot/add_session crash | **fixed**: returns on start failure, temp client stopped |
 | L6 size before download | **partial**: messages rejected by the task's size filter are never downloaded. No hard cap without a filter. |
 | M5 live key per user | **open**: still `(from_id, to_id)`. Planned with the task-id refactor (Phase 3). |
-| H1, H2, M4, L1, L2, L4, L5 | **open** |
+| H1 sessions/tokens at rest | **fixed**: `secret_box.py` (Fernet, `enc:v1:` prefix). Encrypted on write in `database.py` (`add_bot`, `save_connection`), decrypted only in `plugins/test.py` `CLIENT.client`. `db.migrate_secrets()` encrypts old plaintext on startup. Key = `SESSION_KEY` env; without it a key derived from API_ID/API_HASH is used (weaker: set `SESSION_KEY`). |
+| H2, M4, L1, L2, L4, L5 | **open** |

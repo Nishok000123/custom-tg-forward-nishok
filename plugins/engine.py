@@ -8,11 +8,14 @@ so changing /settings later never changes a forward that is already running.
 Public API:
     build_task_filters(configs, overrides=None) -> dict
     should_forward(msg, task_filters, seen=None) -> (bool, reason)
+    build_output(msg, task_filters) -> Optional[str]   (final caption / text HTML)
     render_caption(msg, task_filters) -> Optional[str]
-    summarize_filters(task_filters) -> str     (one-line human summary)
+    preview_text(task_filters) -> str                  (sample output for the UI)
+    summarize_filters(task_filters) -> str             (one-line human summary)
 """
 import copy
 import html
+import re
 from typing import Optional, Tuple
 
 MEDIA_TYPES = (
@@ -20,12 +23,16 @@ MEDIA_TYPES = (
     "voice", "animation", "sticker", "poll",
 )
 
+MAX_RULES = 20
+
 DEFAULT_TASK_FILTERS = {
     # message types: True = forward, False = skip
     "types": {t: True for t in MEDIA_TYPES},
     # INCLUDE list: if set, a message must contain one of these words
     # (checked in the file name, then caption/text). Case-insensitive.
     "keywords": [],
+    # BLOCK list: skip a message if any of these words/phrases appear.
+    "blocked_words": [],
     # BLOCK list of file extensions, e.g. ["apk", "exe"]
     "extensions": [],
     # size filter in MB; size_mode: "gt" (only larger), "lt" (only smaller), None (off)
@@ -35,18 +42,60 @@ DEFAULT_TASK_FILTERS = {
     "skip_duplicates": True,
     # transform
     "caption": None,        # template with {filename} {size} {caption}; None = keep original
-    "forward_tag": False,   # True = forward with "Forwarded from" header
+    "replace": [],          # [[find, replace], ...] on caption/text, case-insensitive
+    "strip_links": False,   # remove URLs / t.me links
+    "strip_mentions": False,  # remove @usernames
+    "header": None,         # HTML added above caption/text ({filename} {size} allowed)
+    "footer": None,         # HTML added below
+    "forward_tag": False,   # True = forward with "Forwarded from" header (no text changes)
     "protect": False,
     "button": None,         # raw button text, parsed later
 }
 
 
 def _as_list(value):
+    """Single words: split on commas/spaces, lowercase, strip leading dots."""
     if not value:
         return []
     if isinstance(value, str):
         value = value.replace(",", " ").split()
     return [str(v).strip().lower().lstrip(".") for v in value if str(v).strip()]
+
+
+def _as_phrases(value):
+    """Phrases: split on commas/new lines only, so 'promo code' stays one item."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = re.split(r"[,\n]", value)
+    out = []
+    for v in value:
+        v = str(v).strip().lower()
+        if v and v not in out:
+            out.append(v)
+    return out[:50]
+
+
+def _as_rules(value):
+    rules = []
+    for r in value or []:
+        if isinstance(r, (list, tuple)) and len(r) == 2 and str(r[0]).strip():
+            rules.append([str(r[0]), str(r[1] or "")])
+    return rules[:MAX_RULES]
+
+
+def parse_rules(text: str) -> list:
+    """'old => new' per line ('old =>' removes the word). Lines without => are ignored."""
+    rules = []
+    for line in str(text or "").splitlines():
+        sep = "=>" if "=>" in line else ("->" if "->" in line else None)
+        if not sep:
+            continue
+        old, new = line.split(sep, 1)
+        old = old.strip()
+        if old:
+            rules.append([old, new.strip()])
+    return rules[:MAX_RULES]
 
 
 def build_task_filters(configs: Optional[dict] = None, overrides: Optional[dict] = None) -> dict:
@@ -83,6 +132,14 @@ def merge_filters(base: dict, overrides: dict) -> dict:
             base.setdefault("types", {}).update({t: bool(x) for t, x in v.items() if t in MEDIA_TYPES})
         elif k in ("keywords", "extensions"):
             base[k] = _as_list(v)
+        elif k == "blocked_words":
+            base[k] = _as_phrases(v)
+        elif k == "replace":
+            base[k] = _as_rules(v)
+        elif k in ("strip_links", "strip_mentions", "skip_duplicates", "forward_tag", "protect"):
+            base[k] = bool(v)
+        elif k in ("header", "footer", "caption"):
+            base[k] = str(v) if v else None
         elif k in DEFAULT_TASK_FILTERS:
             base[k] = v
     return base
@@ -130,6 +187,14 @@ def _plain_text(msg) -> str:
     return str(getattr(msg, "caption", None) or getattr(msg, "text", None) or "")
 
 
+def _as_html(value) -> str:
+    """pyrogram Str has .html; plain strings are escaped."""
+    if value is None:
+        return ""
+    rich = getattr(value, "html", None)
+    return rich if rich is not None else html.escape(str(value))
+
+
 def dedupe_key(msg) -> Optional[str]:
     m = _media_obj(msg)
     if m is not None:
@@ -141,7 +206,7 @@ def should_forward(msg, task_filters: dict, seen: Optional[set] = None) -> Tuple
     """
     Decide whether this task forwards `msg`.
     Returns (True, "ok") or (False, reason) where reason is one of:
-    empty, type, keyword, extension, size, duplicate.
+    empty, type, keyword, blocked, extension, size, duplicate.
     `seen` is a per-task set of file_unique_ids; it is updated when True is returned.
     """
     if msg is None or getattr(msg, "empty", False) or getattr(msg, "service", False):
@@ -153,10 +218,13 @@ def should_forward(msg, task_filters: dict, seen: Optional[set] = None) -> Tuple
     if not f["types"].get(t, True):
         return False, "type"
 
-    if f["keywords"]:
+    hay = None
+    if f["keywords"] or f.get("blocked_words"):
         hay = (_file_name(msg) + " " + _plain_text(msg)).lower()
-        if not any(k in hay for k in f["keywords"]):
-            return False, "keyword"
+    if f["keywords"] and not any(k in hay for k in f["keywords"]):
+        return False, "keyword"
+    if f.get("blocked_words") and any(w in hay for w in f["blocked_words"]):
+        return False, "blocked"
 
     name = _file_name(msg)
     if f["extensions"] and name and "." in name:
@@ -181,6 +249,11 @@ def should_forward(msg, task_filters: dict, seen: Optional[set] = None) -> Tuple
 
 # ── transform ────────────────────────────────────────────────────────────────
 
+_URL_RE = re.compile(r"(?i)\b(?:https?://|www\.|(?:t|telegram)\.me/)[^\s<]+")
+_ANCHOR_RE = re.compile(r"(?is)<a\s[^>]*>(.*?)</a>")
+_MENTION_RE = re.compile(r"(?<![\w/@.])@[A-Za-z][A-Za-z0-9_]{3,31}\b")
+
+
 def human_size(size) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
     size = float(size or 0)
@@ -191,25 +264,93 @@ def human_size(size) -> str:
     return "%.2f %s" % (size, units[i])
 
 
+def _fill(template: str, filename: str, size: int, caption_html: Optional[str] = None) -> str:
+    """Plain str.replace of the known tokens — never str.format (see audit H3)."""
+    out = template.replace("{filename}", html.escape(filename or ""))
+    out = out.replace("{size}", human_size(size) if size else "")
+    if caption_html is not None:
+        out = out.replace("{caption}", caption_html)
+    return out
+
+
+def text_tools_active(tf: dict) -> bool:
+    return bool(
+        tf.get("replace") or tf.get("strip_links") or tf.get("strip_mentions")
+        or tf.get("header") or tf.get("footer")
+    )
+
+
+def apply_text_tools(body: str, tf: dict, filename: str = "", size: int = 0) -> str:
+    """Find/replace, strip links/@mentions, then add header/footer. Works on HTML."""
+    out = body or ""
+    for old, new in tf.get("replace") or []:
+        pat = re.compile(re.escape(html.escape(old, quote=False)), re.I)
+        rep = html.escape(new, quote=False)
+        out = pat.sub(lambda _m: rep, out)
+    if tf.get("strip_links"):
+        def _unwrap(m):
+            label = m.group(1)
+            return "" if (not label.strip() or _URL_RE.search(label)) else label
+        out = _ANCHOR_RE.sub(_unwrap, out)
+        out = _URL_RE.sub("", out)
+    if tf.get("strip_mentions"):
+        out = _MENTION_RE.sub("", out)
+    if tf.get("strip_links") or tf.get("strip_mentions") or tf.get("replace"):
+        out = re.sub(r"[ \t]{2,}", " ", out)
+        out = re.sub(r"[ \t]+\n", "\n", out)
+        out = re.sub(r"\n{3,}", "\n\n", out)
+    out = out.strip()
+    header = _fill(tf["header"], filename, size).strip() if tf.get("header") else ""
+    footer = _fill(tf["footer"], filename, size).strip() if tf.get("footer") else ""
+    return "\n\n".join(p for p in (header, out, footer) if p)
+
+
 def render_caption(msg, task_filters: dict) -> Optional[str]:
     """
-    Safe caption templating: only {filename}, {size}, {caption} are replaced
-    (plain str.replace — no str.format, so user templates cannot touch objects).
+    Caption template only: {filename}, {size}, {caption} are replaced.
     Returns None to keep the original caption.
     """
     template = task_filters.get("caption")
     if not template or _media_obj(msg) is None:
         return None
-    original = getattr(msg, "caption", None)
-    if original is not None:
-        original = getattr(original, "html", None) or str(original)
+    return _fill(template, _file_name(msg), _file_size(msg), _as_html(getattr(msg, "caption", None)))
+
+
+def build_output(msg, task_filters: dict) -> Optional[str]:
+    """
+    Final caption (media) or text (text messages) after template + text tools.
+    None = send the original unchanged. "" for a text message = nothing left to send.
+    """
+    tf = task_filters
+    t = message_type(msg)
+    is_media = _media_obj(msg) is not None
+    if t != "text" and not is_media:
+        return None
+    has_template = is_media and bool(tf.get("caption"))
+    if not has_template and not text_tools_active(tf):
+        return None
+    if has_template:
+        body = render_caption(msg, tf) or ""
+    elif is_media:
+        body = _as_html(getattr(msg, "caption", None))
     else:
-        original = ""
-    out = template
-    out = out.replace("{filename}", html.escape(_file_name(msg)))
-    out = out.replace("{size}", human_size(_file_size(msg)))
-    out = out.replace("{caption}", original)
-    return out
+        body = _as_html(getattr(msg, "text", None))
+    return apply_text_tools(body, tf, _file_name(msg), _file_size(msg))
+
+
+SAMPLE_TEXT = "Episode 12 is out 🎬\nJoin @mychannel → https://t.me/mychannel"
+SAMPLE_FILE = "Show.S01E12.1080p.mkv"
+SAMPLE_SIZE = 734003200
+
+
+def preview_text(task_filters: dict) -> str:
+    """What a sample media caption turns into with these filters (HTML)."""
+    tf = task_filters
+    body = html.escape(SAMPLE_TEXT)
+    if tf.get("caption"):
+        body = _fill(tf["caption"], SAMPLE_FILE, SAMPLE_SIZE, body)
+    out = apply_text_tools(body, tf, SAMPLE_FILE, SAMPLE_SIZE)
+    return out or "<i>(empty caption)</i>"
 
 
 def summarize_filters(task_filters: dict) -> str:
@@ -218,7 +359,9 @@ def summarize_filters(task_filters: dict) -> str:
     parts = []
     parts.append("types: all" if not off else "skip: " + ", ".join(off))
     if f["keywords"]:
-        parts.append("keywords: " + ", ".join(f["keywords"]))
+        parts.append("include: " + ", ".join(f["keywords"]))
+    if f["blocked_words"]:
+        parts.append("block: " + ", ".join(f["blocked_words"]))
     if f["extensions"]:
         parts.append("block ext: " + ", ".join(f["extensions"]))
     if f["size_mode"]:
@@ -226,6 +369,18 @@ def summarize_filters(task_filters: dict) -> str:
     parts.append("dupes: skip" if f["skip_duplicates"] else "dupes: allow")
     if f["caption"]:
         parts.append("custom caption")
+    if f["replace"]:
+        parts.append(f"{len(f['replace'])} replace rule(s)")
+    if f["strip_links"]:
+        parts.append("no links")
+    if f["strip_mentions"]:
+        parts.append("no @mentions")
+    if f["header"]:
+        parts.append("header")
+    if f["footer"]:
+        parts.append("footer")
     if f["forward_tag"]:
         parts.append("forward tag")
+    if f["protect"]:
+        parts.append("protected")
     return " · ".join(parts)

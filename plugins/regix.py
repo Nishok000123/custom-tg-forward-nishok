@@ -8,7 +8,7 @@ import logging
 from .utils import STS, resolve_chat, format_chat_label, get_client_for_user
 from database import db
 from .test import CLIENT , start_clone_bot, parse_buttons
-from .engine import build_task_filters, normalize, should_forward, render_caption, summarize_filters
+from .engine import build_task_filters, normalize, should_forward, render_caption, build_output, summarize_filters
 from config import Config, temp
 from translation import Translation
 from pyrogram import Client, filters 
@@ -176,8 +176,9 @@ async def pub_(bot, message):
                             await asyncio.sleep(1)
                             MSG = []
                     else:
-                        new_caption = render_caption(message, tf)
+                        new_caption = build_output(message, tf)
                         details = {
+                            "msg_obj": message,
                             "msg_id": message.id,
                             "media": media(message),
                             "caption": new_caption,
@@ -213,7 +214,7 @@ async def copy(bot, msg, m, sts):
    topic_id = topic_id or sts.get('TO_TOPIC')
    try:
      ok, how = await transfer_message(
-         bot, None, dest_chat,
+         bot, msg.get("msg_obj"), dest_chat,
          from_chat_id=sts.get('FROM'),
          message_id=msg.get("msg_id"),
          topic_id=topic_id,
@@ -482,10 +483,13 @@ async def _live_watcher(client, from_id, to_id, user_id, notify_bot, auto_restar
                 if key not in temp.LIVE_WATCHERS:
                     break
                 ok_f, _why = should_forward(msg, tf, seen)
+                live_meta = temp.LIVE_WATCHERS.get(key) or {}
                 if not ok_f:
+                    if _why != "empty":
+                        live_meta["filtered"] = live_meta.get("filtered", 0) + 1
                     last_id = max(last_id, msg.id)
                     continue
-                live_caption = render_caption(msg, tf)
+                live_caption = build_output(msg, tf)
                 try:
                     ok, how = await transfer_message(
                         client, msg, dest_chat,
@@ -508,6 +512,8 @@ async def _live_watcher(client, from_id, to_id, user_id, notify_bot, auto_restar
                         if any(k in err_str for k in fatal_keywords):
                             raise RuntimeError(how)
                         logger.error(f"[LiveFwd] Transfer fail msg {msg.id}: {how}")
+                    if ok:
+                        live_meta["sent"] = live_meta.get("sent", 0) + 1
                     last_id = max(last_id, msg.id)
                     flood_notified = False
                     await asyncio.sleep(0.5)
@@ -685,6 +691,9 @@ async def _start_live_watcher(
 
     topic_label = f"/{to_topic}" if to_topic else ""
     temp.LIVE_WATCHERS[key] = {
+        "started_at": time.time(),
+        "sent": 0,
+        "filtered": 0,
         "task_filters": task_filters,
         "client": client,
         "user_id": user_id,
@@ -902,7 +911,7 @@ async def cancel_pending_live(bot, message):
 @Client.on_message(filters.private & ~filters.command([
     "start", "fwd", "forward", "settings", "reset", "status",
     "live", "stoplive", "lives", "cancel", "addconn", "listconn", "useconn",
-    "delconn", "schedule", "listschedule", "cancelschedule", "help", "filters",
+    "delconn", "schedule", "listschedule", "cancelschedule", "help", "filters", "tasks",
     "broadcast", "resetall", "unequify", "save", "batchsave", "savelink", "cancelsave"
 ]))
 async def live_guided_flow(bot, message: Message):

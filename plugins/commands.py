@@ -33,6 +33,7 @@ def get_main_menu():
             InlineKeyboardButton("ℹ️ About", callback_data="menu#about"),
         ],
         [
+            InlineKeyboardButton("📋 My tasks", callback_data="tk#h"),
             InlineKeyboardButton("⏹ Cancel batches", callback_data="menu#cancel"),
         ],
     ])
