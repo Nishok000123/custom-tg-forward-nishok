@@ -25,9 +25,11 @@ class STS:
     def store(
         self, From, to, skip, limit, continuous=False, to_topic=None,
         force_download=False, from_list=None, to_list=None,
+        task_filters=None,
     ):
         self.data[self.id] = {
             "FROM": From, 'TO': to, 'TO_TOPIC': to_topic,
+            'TASK_FILTERS': task_filters,
             'force_download': force_download,
             'FROM_LIST': from_list,
             'TO_LIST': to_list,

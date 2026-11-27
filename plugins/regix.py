@@ -3,10 +3,12 @@ import sys
 import math
 import time
 import asyncio 
+import html
 import logging
 from .utils import STS, resolve_chat, format_chat_label, get_client_for_user
-from database import db 
-from .test import CLIENT , start_clone_bot
+from database import db
+from .test import CLIENT , start_clone_bot, parse_buttons
+from .engine import build_task_filters, normalize, should_forward, render_caption, summarize_filters
 from config import Config, temp
 from translation import Translation
 from pyrogram import Client, filters 
@@ -45,13 +47,21 @@ async def pub_(bot, message):
                 show_alert=True,
             )
     m = await msg_edit(message.message, "<code>Verifying…</code>")
-    _bot, caption, forward_tag, data, protect, button = await sts.get_data(user)
+    _bot = await db.get_bot(user)
     if not _bot:
       return await msg_edit(m, "<code>No bot/session. Use /settings first.</code>", wait=True)
+    # Per-forward filters: snapshot taken when the forward was created (/fwd).
+    # Older jobs without a snapshot fall back to the user's current /settings.
+    tf = sts.get("TASK_FILTERS") or build_task_filters(await db.get_configs(user))
+    tf = normalize(tf)
+    forward_tag = tf["forward_tag"]
+    protect = tf["protect"] or None
+    button = (parse_buttons(tf["button"]) or None) if tf["button"] else None
     try:
       client = await start_clone_bot(CLIENT.client(_bot))
-    except Exception as e:  
-      return await m.edit(e)
+    except Exception as e:
+      logger.exception("start client failed")
+      return await msg_edit(m, f"<b>Could not start session:</b> <code>{html.escape(str(e))[:300]}</code>", wait=True)
     await msg_edit(m, "<code>Starting…</code>")
     temp.forwardings += 1
     await db.add_frwd(user)
@@ -132,6 +142,7 @@ async def pub_(bot, message):
                     continue
 
                 MSG = []
+                seen = set()  # duplicate tracking for this source → target pair
                 logger.info(f"Forward {from_id} → {to_id} limit={limit} skip={sts.get('skip')}")
                 async for message in client.iter_messages(
                     client,
@@ -146,14 +157,14 @@ async def pub_(bot, message):
                         await edit(m, "Progressing", 10, sts)
                     pling += 1
                     sts.add("fetched")
-                    if message == "DUPLICATE":
-                        sts.add("duplicate")
-                        continue
-                    elif message == "FILTERED":
-                        sts.add("filtered")
-                        continue
-                    if getattr(message, "empty", False) or getattr(message, "service", False):
-                        sts.add("deleted")
+                    ok, why = should_forward(message, tf, seen)
+                    if not ok:
+                        if why == "duplicate":
+                            sts.add("duplicate")
+                        elif why == "empty":
+                            sts.add("deleted")
+                        else:
+                            sts.add("filtered")
                         continue
                     if forward_tag:
                         MSG.append(message.id)
@@ -165,7 +176,7 @@ async def pub_(bot, message):
                             await asyncio.sleep(1)
                             MSG = []
                     else:
-                        new_caption = custom_caption(message, caption)
+                        new_caption = render_caption(message, tf)
                         details = {
                             "msg_id": message.id,
                             "media": media(message),
@@ -409,7 +420,7 @@ async def status_msg(bot, msg):
     _, status, est_time, percentage, frwd_id = msg.data.split("#")
     sts = STS(frwd_id)
     if not sts.verify():
-       fetched, forwarded, remaining = 0
+       fetched, forwarded, remaining = 0, 0, 0
     else:
        fetched, forwarded = sts.get('fetched'), sts.get('total_files')
        remaining = fetched - forwarded 
@@ -439,6 +450,16 @@ async def _live_watcher(client, from_id, to_id, user_id, notify_bot, auto_restar
     force_download = force_download or meta.get("force_download", False)
     topic_id = to_topic if to_topic is not None else meta.get("to_topic")
     dest_chat = to_id
+    # This watcher's own filters (snapshot from when it was created).
+    tf = meta.get("task_filters")
+    if not tf:
+        tf = build_task_filters(await db.get_configs(user_id))
+    tf = normalize(tf)
+    if key in temp.LIVE_WATCHERS:
+        # share the same dict with /filters editor so edits apply live
+        temp.LIVE_WATCHERS[key]["task_filters"] = tf
+    seen = set()
+    live_markup = (parse_buttons(tf["button"]) or None) if tf["button"] else None
 
     try:
         async for msg in client.get_chat_history(from_id, limit=1):
@@ -460,10 +481,18 @@ async def _live_watcher(client, from_id, to_id, user_id, notify_bot, auto_restar
             for msg in reversed(new_msgs):
                 if key not in temp.LIVE_WATCHERS:
                     break
+                ok_f, _why = should_forward(msg, tf, seen)
+                if not ok_f:
+                    last_id = max(last_id, msg.id)
+                    continue
+                live_caption = render_caption(msg, tf)
                 try:
                     ok, how = await transfer_message(
                         client, msg, dest_chat,
                         topic_id=topic_id,
+                        caption=live_caption,
+                        reply_markup=live_markup,
+                        protect_content=tf["protect"] or None,
                         uploader=notify_bot,
                         force_download=force_download,
                     )
@@ -501,6 +530,9 @@ async def _live_watcher(client, from_id, to_id, user_id, notify_bot, auto_restar
                         ok, how = await transfer_message(
                             client, msg, dest_chat,
                             topic_id=topic_id,
+                            caption=live_caption,
+                            reply_markup=live_markup,
+                            protect_content=tf["protect"] or None,
                             uploader=notify_bot,
                             force_download=force_download,
                         )
@@ -611,8 +643,10 @@ async def _start_live_watcher(
     to_username=None,
     to_topic=None,
     force_download=False,
+    task_filters=None,
 ):
-    """Helper to start a watcher task and register it."""
+    """Helper to start a watcher task and register it.
+    task_filters: this watcher's own filters; defaults to a snapshot of /settings."""
     from .transfer import parse_dest
     # allow target as chat/topic
     dest_chat, parsed_topic = parse_dest(to_id)
@@ -645,8 +679,13 @@ async def _start_live_watcher(
     except Exception as e:
         return False, str(e)
 
+    if not task_filters:
+        task_filters = build_task_filters(await db.get_configs(user_id))
+    task_filters = normalize(task_filters)
+
     topic_label = f"/{to_topic}" if to_topic else ""
     temp.LIVE_WATCHERS[key] = {
+        "task_filters": task_filters,
         "client": client,
         "user_id": user_id,
         "conn_name": conn_name or "default",
@@ -666,6 +705,7 @@ async def _start_live_watcher(
         to_username=to_username,
         to_topic=to_topic,
         force_download=force_download,
+        task_filters=task_filters,
     )
     asyncio.create_task(
         _live_watcher(
@@ -862,7 +902,7 @@ async def cancel_pending_live(bot, message):
 @Client.on_message(filters.private & ~filters.command([
     "start", "fwd", "forward", "settings", "reset", "status",
     "live", "stoplive", "lives", "cancel", "addconn", "listconn", "useconn",
-    "delconn", "schedule", "listschedule", "cancelschedule", "help",
+    "delconn", "schedule", "listschedule", "cancelschedule", "help", "filters",
     "broadcast", "resetall", "unequify", "save", "batchsave", "savelink", "cancelsave"
 ]))
 async def live_guided_flow(bot, message: Message):
@@ -1160,6 +1200,7 @@ async def restore_live_watchers(bot):
                 temp.LIVE_WATCHERS[key] = {
                     "client": client,
                     "user_id": user_id,
+                    "task_filters": w.get("task_filters"),
                     "conn_name": conn_name or "default",
                     "from_title": w.get("from_title") or str(from_id),
                     "to_title": w.get("to_title") or str(to_id),

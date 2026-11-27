@@ -45,11 +45,12 @@ def _build_dashboard_routes():
         return f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
 
     def check_auth(request):
-        # When dashboard enabled, require token if set; if no token, refuse all API
-        if not API_TOKEN:
+        # When dashboard enabled, require a strong token; if missing/short, refuse all API
+        import hmac
+        if not API_TOKEN or len(API_TOKEN) < 32:
             return False
         token = request.headers.get("X-API-Token", "")
-        return token == API_TOKEN
+        return hmac.compare_digest(token.encode(), API_TOKEN.encode())
 
     def unauthorized():
         return web.Response(

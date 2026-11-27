@@ -302,10 +302,18 @@ async def run(bot, message):
         continuous = any(s.get("continuous") for s in sources)
         pairs = len(sources) * len(targets)
 
+        # Snapshot this forward's own filters now; later /settings changes
+        # won't alter a forward that was already created.
+        from .engine import build_task_filters, summarize_filters
+        from database import db as _db
+        task_filters = build_task_filters(await _db.get_configs(user_id))
+
         forward_id = f"{user_id}-{skipno.id}"
         reply_markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("Yes — start", callback_data=f"start_public_{forward_id}"),
             InlineKeyboardButton("No", callback_data="close_btn"),
+        ], [
+            InlineKeyboardButton("⚙️ Filters for this forward", callback_data=f"tfb#{forward_id}#v"),
         ]])
 
         await message.reply_text(
@@ -318,7 +326,8 @@ async def run(bot, message):
             )
             + f"\n\n<b>Mode:</b> <code>{'download' if force_download else 'auto'}</code>"
             + f"\n<b>Jobs:</b> <code>{pairs}</code> (sources × targets)"
-            + (f"\n<b>Live continuous:</b> yes" if continuous else ""),
+            + (f"\n<b>Live continuous:</b> yes" if continuous else "")
+            + f"\n<b>Filters:</b> <code>{summarize_filters(task_filters)}</code>",
             disable_web_page_preview=True,
             reply_markup=reply_markup,
         )
@@ -337,6 +346,7 @@ async def run(bot, message):
             force_download=force_download,
             from_list=sources,
             to_list=targets,
+            task_filters=task_filters,
         )
     finally:
         if not used_main and client and client is not bot:

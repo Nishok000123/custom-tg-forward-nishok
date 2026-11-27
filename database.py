@@ -112,7 +112,11 @@ class Database:
         }
         user = await self.col.find_one({'id':int(id)})
         if user:
-            return user.get('configs', default)
+            # merge with defaults so configs saved by older versions never miss keys
+            stored = user.get('configs') or {}
+            merged = {**default, **stored}
+            merged['filters'] = {**default['filters'], **(stored.get('filters') or {})}
+            return merged
         return default 
        
     async def add_bot(self, datas):
@@ -226,6 +230,7 @@ class Database:
         to_username: str = None,
         to_topic: int = None,
         force_download: bool = False,
+        task_filters: dict = None,
     ):
         key = {"user_id": user_id, "from_id": from_id, "to_id": to_id}
         data = {
@@ -238,6 +243,8 @@ class Database:
             "to_topic": to_topic,
             "force_download": force_download,
         }
+        if task_filters is not None:
+            data["task_filters"] = task_filters
         await self.live.update_one(key, {"$set": data}, upsert=True)
 
     async def remove_live_watcher(self, user_id: int, from_id: int, to_id: int):

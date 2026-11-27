@@ -1,6 +1,7 @@
 import os
-import re 
+import re
 import sys
+import html
 import typing
 import asyncio 
 import logging 
@@ -116,9 +117,9 @@ class CLIENT:
     
   def client(self, data, user=None):
      if user == None and data.get('is_bot') == False:
-        return Client("USERBOT", self.api_id, self.api_hash, session_string=data.get('session'))
+        return Client(f"USERBOT_{data.get('user_id', '')}", self.api_id, self.api_hash, session_string=data.get('session'), in_memory=True)
      elif user == True:
-        return Client("USERBOT", self.api_id, self.api_hash, session_string=data)
+        return Client("USERBOT_NEW", self.api_id, self.api_hash, session_string=data, in_memory=True)
      elif user != False:
         data = data.get('token')
      return Client("BOT", self.api_id, self.api_hash, bot_token=data, in_memory=True)
@@ -139,8 +140,12 @@ class CLIENT:
      try:
        _client = await start_clone_bot(self.client(bot_token, False), True)
      except Exception as e:
-       await msg.reply_text(f"<b>BOT ERROR:</b> `{e}`")
+       return await msg.reply_text(f"<b>BOT ERROR:</b> <code>{html.escape(str(e))[:300]}</code>")
      _bot = _client.me
+     try:
+       await _client.stop()
+     except Exception:
+       pass
      details = {
        'id': _bot.id,
        'is_bot': True,
@@ -164,8 +169,12 @@ class CLIENT:
      try:
        client = await start_clone_bot(self.client(msg.text, True), True)
      except Exception as e:
-       await msg.reply_text(f"<b>USER BOT ERROR:</b> `{e}`")
+       return await msg.reply_text(f"<b>USER BOT ERROR:</b> <code>{html.escape(str(e))[:300]}</code>")
      user = client.me
+     try:
+       await client.stop()
+     except Exception:
+       pass
      details = {
        'id': user.id,
        'is_bot': False,

@@ -254,7 +254,7 @@ async def schedule_cmd(bot, message: Message):
 @Client.on_message(filters.private & ~filters.command([
     "start", "fwd", "forward", "settings", "reset", "status",
     "live", "stoplive", "lives", "cancel", "addconn", "listconn", "useconn",
-    "delconn", "schedule", "listschedule", "cancelschedule", "help",
+    "delconn", "schedule", "listschedule", "cancelschedule", "help", "filters",
     "broadcast", "resetall", "unequify", "save", "batchsave", "savelink"
 ]))
 async def schedule_flow(bot, message: Message):

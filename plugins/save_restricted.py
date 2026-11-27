@@ -226,7 +226,7 @@ async def cancelsave_cmd(bot, message: Message):
 @Client.on_message(filters.private & filters.text & ~filters.command([
     "start", "fwd", "forward", "settings", "reset", "status",
     "live", "stoplive", "lives", "cancel", "addconn", "listconn", "useconn",
-    "delconn", "schedule", "listschedule", "cancelschedule", "help",
+    "delconn", "schedule", "listschedule", "cancelschedule", "help", "filters",
     "broadcast", "resetall", "unequify", "save", "batchsave", "savelink", "cancelsave"
 ]))
 async def save_flow(bot, message: Message):
